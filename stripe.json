@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "products": [
+    {
+      "name": "Founder Growth Agent - Starter",
+      "description": "Starter plan for Founder Growth Agent",
+      "prices": [{"currency": "usd", "unit_amount": 900, "recurring": {"interval": "month"}}]
+    },
+    {
+      "name": "Founder Growth Agent - Pro",
+      "description": "Pro plan for Founder Growth Agent",
+      "prices": [{"currency": "usd", "unit_amount": 2900, "recurring": {"interval": "month"}}]
+    }
+  ]
+}
