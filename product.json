@@ -1,0 +1,28 @@
+{
+  "name": "founder-growth-agent",
+  "displayName": "Founder Growth Agent",
+  "description": "AI-powered founder-led B2B growth strategist for solo founders",
+  "category": "ai",
+  "stack": ["AI", "Python"],
+  "version": "1.0.0",
+  "pricing": {
+    "free": true,
+    "plans": [
+      {"name": "Starter", "price": 9, "interval": "month", "features": ["Core features", "1 user", "Basic support"]},
+      {"name": "Pro", "price": 29, "interval": "month", "features": ["All Starter features", "Unlimited usage", "Priority support"]}
+    ]
+  },
+  "marketplace": {
+    "url": "https://auroramarket.org/products/founder-growth-agent",
+    "listed": true
+  },
+  "deployment": {
+    "vercel": true,
+    "docker": false
+  },
+  "aurora": {
+    "engine_version": "1.0",
+    "finishing_status": "sweep-applied",
+    "last_updated": "2026-04-04"
+  }
+}
