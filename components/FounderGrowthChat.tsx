@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 
 interface Message {
@@ -8,6 +8,16 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+}
+
+interface LinkedAccount {
+  id: string;
+  account_token: string;
+  integration: string;
+  integration_slug: string;
+  category: string;
+  end_user_organization_name: string;
+  status: string;
 }
 
 const SUGGESTED_PROMPTS = [
@@ -18,17 +28,79 @@ const SUGGESTED_PROMPTS = [
   "Create a 7-day founder-led growth action plan",
 ];
 
+const CRM_PROMPTS = [
+  "Analyze my CRM contacts and suggest who to reach out to first",
+  "Write personalized outreach for my top 5 leads",
+  "What patterns do you see in my pipeline? Where should I focus?",
+  "Draft follow-up messages for my open deals",
+];
+
 export default function FounderGrowthChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [currentResponse, setCurrentResponse] = useState("");
+  const [showCRM, setShowCRM] = useState(false);
+  const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([]);
+  const [activeAccount, setActiveAccount] = useState<string | null>(null);
+  const [crmLoading, setCrmLoading] = useState(false);
+  const [linkEmail, setLinkEmail] = useState("");
+  const [linkOrg, setLinkOrg] = useState("");
+  const [linkLoading, setLinkLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, currentResponse]);
+
+  // Load linked accounts on mount
+  const loadLinkedAccounts = useCallback(async () => {
+    setCrmLoading(true);
+    try {
+      const res = await fetch("/api/merge/link");
+      const data = await res.json();
+      if (data.results) {
+        setLinkedAccounts(data.results);
+        if (data.results.length > 0 && !activeAccount) {
+          setActiveAccount(data.results[0].account_token);
+        }
+      }
+    } catch {
+      // silent fail
+    } finally {
+      setCrmLoading(false);
+    }
+  }, [activeAccount]);
+
+  useEffect(() => {
+    loadLinkedAccounts();
+  }, [loadLinkedAccounts]);
+
+  const handleConnectCRM = async () => {
+    if (!linkEmail || !linkOrg) return;
+    setLinkLoading(true);
+    try {
+      const res = await fetch("/api/merge/link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: linkEmail, orgName: linkOrg }),
+      });
+      const data = await res.json();
+      if (data.link_token) {
+        // Open Merge Link in a new window
+        window.open(
+          `https://link.merge.dev/?link_token=${data.link_token}`,
+          "merge-link",
+          "width=600,height=700"
+        );
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLinkLoading(false);
+    }
+  };
 
   const handleSubmit = async (e?: React.FormEvent, overrideMsg?: string) => {
     e?.preventDefault();
@@ -51,7 +123,10 @@ export default function FounderGrowthChat() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg }),
+        body: JSON.stringify({
+          message: msg,
+          accountToken: activeAccount || undefined,
+        }),
       });
 
       const reader = res.body!.getReader();
@@ -72,12 +147,16 @@ export default function FounderGrowthChat() {
           const raw = line.slice(6).trim();
           if (raw === "[DONE]") continue;
 
-          const event = JSON.parse(raw);
-          if (event.chunk) {
-            fullResponse += event.chunk;
-            setCurrentResponse(fullResponse);
-          } else if (event.error) {
-            console.error(event.error);
+          try {
+            const event = JSON.parse(raw);
+            if (event.chunk) {
+              fullResponse += event.chunk;
+              setCurrentResponse(fullResponse);
+            } else if (event.error) {
+              console.error(event.error);
+            }
+          } catch {
+            continue;
           }
         }
       }
@@ -105,6 +184,10 @@ export default function FounderGrowthChat() {
     }
   };
 
+  const prompts = activeAccount
+    ? [...CRM_PROMPTS, ...SUGGESTED_PROMPTS.slice(0, 2)]
+    : SUGGESTED_PROMPTS;
+
   return (
     <div className="flex flex-col h-screen bg-[#0a0a0f] text-white">
       {/* Header */}
@@ -118,12 +201,108 @@ export default function FounderGrowthChat() {
             <p className="text-xs text-white/40">B2B growth strategist for solo founders</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 text-xs text-white/30">
-          <span className="px-2 py-1 rounded-full bg-white/5 border border-white/10">Founder-led</span>
-          <span className="px-2 py-1 rounded-full bg-white/5 border border-white/10">$0 budget</span>
-          <span className="px-2 py-1 rounded-full bg-white/5 border border-white/10">Organic pipeline</span>
+        <div className="flex items-center gap-2">
+          {activeAccount && (
+            <span className="px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              CRM Connected
+            </span>
+          )}
+          <button
+            onClick={() => setShowCRM(!showCRM)}
+            className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-all ${
+              showCRM
+                ? "bg-emerald-600 text-white"
+                : "bg-white/5 text-white/50 hover:text-white hover:bg-white/10 border border-white/10"
+            }`}
+          >
+            {showCRM ? "Close CRM" : "🔗 Connect CRM"}
+          </button>
         </div>
       </header>
+
+      {/* CRM Panel */}
+      {showCRM && (
+        <div className="border-b border-white/10 bg-[#0d0d14] px-6 py-4">
+          <div className="max-w-4xl mx-auto">
+            <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+              <span>🔗</span> CRM Integration
+              <span className="text-xs text-white/30 font-normal">via Merge.dev — HubSpot, Salesforce, Pipedrive, Zoho, Close & more</span>
+            </h3>
+
+            {crmLoading ? (
+              <div className="text-xs text-white/40 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-white/30 animate-pulse" />
+                Loading linked accounts...
+              </div>
+            ) : linkedAccounts.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-xs text-white/50 mb-2">Linked CRM accounts:</p>
+                {linkedAccounts.map((acc) => (
+                  <button
+                    key={acc.id}
+                    onClick={() => setActiveAccount(acc.account_token)}
+                    className={`flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-all w-full text-left ${
+                      activeAccount === acc.account_token
+                        ? "bg-emerald-600/20 border border-emerald-500/30 text-emerald-300"
+                        : "bg-white/5 border border-white/10 text-white/60 hover:bg-white/10"
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${
+                      acc.status === "COMPLETE" ? "bg-emerald-400" : "bg-yellow-400"
+                    }`} />
+                    <span className="font-medium">{acc.integration}</span>
+                    <span className="text-xs text-white/30">— {acc.end_user_organization_name}</span>
+                    {activeAccount === acc.account_token && (
+                      <span className="ml-auto text-xs text-emerald-400">Active</span>
+                    )}
+                  </button>
+                ))}
+                <button
+                  onClick={() => {
+                    setActiveAccount(null);
+                  }}
+                  className="text-xs text-white/30 hover:text-white/60 transition-all mt-1"
+                >
+                  Disconnect CRM context
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs text-white/50">
+                  Connect your CRM to get data-informed outreach advice. The agent will reference your real contacts, leads, and deals.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    placeholder="Your email"
+                    value={linkEmail}
+                    onChange={(e) => setLinkEmail(e.target.value)}
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500/50"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Company name"
+                    value={linkOrg}
+                    onChange={(e) => setLinkOrg(e.target.value)}
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-emerald-500/50"
+                  />
+                  <button
+                    onClick={handleConnectCRM}
+                    disabled={linkLoading || !linkEmail || !linkOrg}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 text-xs font-medium transition-all"
+                  >
+                    {linkLoading ? "Connecting..." : "Connect CRM →"}
+                  </button>
+                </div>
+                <p className="text-xs text-white/20">
+                  Supports: HubSpot, Salesforce, Pipedrive, Zoho CRM, Close, Copper, Freshsales, and 30+ more
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6">
@@ -134,10 +313,13 @@ export default function FounderGrowthChat() {
               <h2 className="text-2xl font-bold mb-2">Founder-Led B2B Growth Agent</h2>
               <p className="text-white/50 text-sm max-w-md mx-auto">
                 Positioning, messaging, content, and outreach strategies — organic, $0-budget B2B growth.
+                {activeAccount && (
+                  <span className="block mt-1 text-emerald-400">✓ CRM connected — ask about your pipeline</span>
+                )}
               </p>
             </div>
             <div className="grid gap-2">
-              {SUGGESTED_PROMPTS.map((p, i) => (
+              {prompts.map((p, i) => (
                 <button
                   key={i}
                   onClick={() => handleSubmit(undefined, p)}
@@ -178,6 +360,17 @@ export default function FounderGrowthChat() {
           </div>
         )}
 
+        {isLoading && !currentResponse && (
+          <div className="max-w-4xl mx-auto">
+            <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-5">
+              <div className="flex items-center gap-2 text-white/30 text-sm">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                {activeAccount ? "Analyzing CRM data and crafting strategy..." : "Crafting your growth strategy..."}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div ref={bottomRef} />
       </div>
 
@@ -190,7 +383,11 @@ export default function FounderGrowthChat() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask about positioning, messaging, content strategy, outreach..."
+              placeholder={
+                activeAccount
+                  ? "Ask about your pipeline, outreach strategy, CRM insights..."
+                  : "Ask about positioning, messaging, content strategy, outreach..."
+              }
               rows={2}
               className="flex-1 resize-none bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white placeholder-white/30 focus:outline-none focus:border-emerald-500/50 focus:bg-white/8 transition-all"
               disabled={isLoading}
@@ -210,7 +407,10 @@ export default function FounderGrowthChat() {
               )}
             </button>
           </div>
-          <p className="text-xs text-white/20 mt-2 ml-1">Enter to send · Shift+Enter for new line</p>
+          <p className="text-xs text-white/20 mt-2 ml-1">
+            Enter to send · Shift+Enter for new line
+            {activeAccount && <span className="text-emerald-400/40 ml-2">· CRM enriched</span>}
+          </p>
         </form>
       </div>
     </div>

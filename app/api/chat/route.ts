@@ -1,12 +1,13 @@
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
 import { SYSTEM_PROMPT_FOUNDER_GROWTH } from "@/lib/agent";
+import { getCRMSummary } from "@/lib/merge";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 export async function POST(req: NextRequest) {
-  const { message } = await req.json();
+  const { message, accountToken } = await req.json();
 
   const apiKey = process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY_BACKUP;
   const apiKey2 = process.env.OPENAI_API_KEY_BACKUP || process.env.OPENAI_API_KEY;
@@ -18,8 +19,6 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  const openai = new OpenAI({ apiKey });
-
   if (!message?.trim()) {
     return new Response(JSON.stringify({ error: "Message required" }), {
       status: 400,
@@ -27,6 +26,19 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Build system prompt — inject CRM context if a linked account exists
+  let systemPrompt = SYSTEM_PROMPT_FOUNDER_GROWTH;
+
+  if (accountToken) {
+    try {
+      const crmSummary = await getCRMSummary(accountToken);
+      systemPrompt += `\n\n---\n\nThe founder has connected their CRM. Here is their current pipeline data. Use this to give specific, data-informed outreach and growth advice. Reference real contacts, leads, and deals when relevant.\n\n${crmSummary}`;
+    } catch {
+      // CRM unavailable — continue without enrichment
+    }
+  }
+
+  const openai = new OpenAI({ apiKey });
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -37,7 +49,7 @@ export async function POST(req: NextRequest) {
         const openaiStream = await openai.chat.completions.create({
           model: "gpt-4o",
           messages: [
-            { role: "system", content: SYSTEM_PROMPT_FOUNDER_GROWTH },
+            { role: "system", content: systemPrompt },
             { role: "user", content: message },
           ],
           temperature: 0.7,
@@ -61,12 +73,11 @@ export async function POST(req: NextRequest) {
         if (apiKey2 && apiKey2 !== apiKey) {
           try {
             const openai2 = new OpenAI({ apiKey: apiKey2 });
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ notice: "Switching to backup API key..." })}\n\n`));
             
             const backupStream = await openai2.chat.completions.create({
               model: "gpt-4o",
               messages: [
-                { role: "system", content: SYSTEM_PROMPT_FOUNDER_GROWTH },
+                { role: "system", content: systemPrompt },
                 { role: "user", content: message },
               ],
               temperature: 0.7,
@@ -89,37 +100,7 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // If we get here, both keys failed
         const msg = mainError instanceof Error ? mainError.message : "Both API keys failed";
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`)
-        );
-      } finally {
-        controller.close();
-      }
-    },
-  });
-          model: "gpt-4o",
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT_FOUNDER_GROWTH },
-            { role: "user", content: message },
-          ],
-          temperature: 0.7,
-          max_tokens: 2000,
-          stream: true,
-        });
-
-        for await (const chunk of openaiStream) {
-          const delta = chunk.choices[0]?.delta?.content || "";
-          if (delta) {
-            const line = `data: ${JSON.stringify({ chunk: delta })}\n\n`;
-            controller.enqueue(encoder.encode(line));
-          }
-        }
-
-        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "Stream error";
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`)
         );
